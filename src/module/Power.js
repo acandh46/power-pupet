@@ -30,7 +30,7 @@ class PowerSelector {
 
 class Power extends Browser {
     constructor(url, user, password, pin) {
-        super(user, null, true, false);
+        super(user, null, true, isLinux ? true : false);
         this.url = url;
         this.user = user;
         this.password = password;
@@ -48,7 +48,8 @@ class Power extends Browser {
                 this.loadBrowser = true;
             }
         } catch (error) {
-            console.error(error);
+            console.error("Gagal meluncurkan browser:", error.message);
+            throw new Error("Inisialisasi browser gagal.");
         }
     }
 
@@ -80,6 +81,8 @@ class Power extends Browser {
             }
         } catch (error) {
             response.error = error.message;
+            response.status = false;
+            console.error("Kesalahan saat menjalankan proses:", error.message);
         }
         return response;
     }
@@ -90,6 +93,9 @@ class Power extends Browser {
         try {
             await this.page.waitForSelector(PowerSelector.LOGIN.captcha, { visible: true });
             const captchaElement = await this.page.$(PowerSelector.LOGIN.captcha);
+            if (!captchaElement) {
+                throw new Error("Elemen captcha tidak ditemukan.");
+            }
             const captchaScreenshot = await captchaElement.screenshot({
                 encoding: "base64",
             });
@@ -99,7 +105,7 @@ class Power extends Browser {
 
             return this.captcha;
         } catch (error) {
-            console.error(error);
+            console.error("Kesalahan saat login:", error.message);
             return null;
         }
     }
@@ -127,46 +133,44 @@ class Power extends Browser {
 
             await sleep(4000);
 
-            await this.page.waitForSelector("iframe#pin", { visible: true, timeout: 5000 });
-
             const iframeEl = await this.page.$("iframe#pin");
-            if (iframeEl) {
-                const frame = await iframeEl.contentFrame();
-                if (!frame) return { msg: "Captcha not found", data: null };
-
-                const pin = this.pin.split("");
-                let buttonFound = false;
-                await frame.waitForSelector("#keypad button.num", { visible: true, timeout: 10000 });
-                const allKeypad = await frame.$$("#keypad button.num");
-                console.log(`[Power] Jumlah tombol angka yang ditemukan: ${allKeypad.length}`);
-
-                for (const digit of pin) {
-                    for (const keypad of allKeypad) {
-                        const text = await frame.evaluate((button) => button.textContent, keypad);
-                        if (text === digit) {
-                            await keypad.click();
-                            buttonFound = true;
-                            break;
-                        }
-                    }
-                    if (!buttonFound) return { status: false, msg: "Pin not found", data: null };
-                    buttonFound = false;
-                }
-
-                await this.page.waitForNavigation({ waitUntil: "domcontentloaded" });
-                const url = this.page.url();
-                const cook = await this.getCookies();
-                if (url.includes("adminarea")) {
-                    this.isLogined = true;
-                    this.loadBrowser = false;
-                    await this.closeBrowser();
-                    return { status: true, msg: "Berhasil login", data: this.cook };
-                }
-                return { status: false, msg: "Gagal login", data: null };
-            } else {
-                return { status: false, msg: "Captcha not found", data: null };
+            if (!iframeEl) {
+                throw new Error("Iframe untuk PIN tidak ditemukan.");
             }
+            const frame = await iframeEl.contentFrame();
+            if (!frame) return { status: false, msg: "Captcha not found", data: null };
+
+            const pin = this.pin.split("");
+            let buttonFound = false;
+            await frame.waitForSelector("#keypad button.num", { visible: true, timeout: 10000 });
+            const allKeypad = await frame.$$("#keypad button.num");
+            console.log(`[Power] Jumlah tombol angka yang ditemukan: ${allKeypad.length}`);
+
+            for (const digit of pin) {
+                for (const keypad of allKeypad) {
+                    const text = await frame.evaluate((button) => button.textContent, keypad);
+                    if (text === digit) {
+                        await keypad.click();
+                        buttonFound = true;
+                        break;
+                    }
+                }
+                if (!buttonFound) return { status: false, msg: "Pin not found", data: null };
+                buttonFound = false;
+            }
+
+            await this.page.waitForNavigation({ waitUntil: "domcontentloaded" });
+            const url = this.page.url();
+            const cook = await this.getCookies();
+            if (url.includes("adminarea")) {
+                this.isLogined = true;
+                this.loadBrowser = false;
+                await this.closeBrowser();
+                return { status: true, msg: "Berhasil login", data: this.cook };
+            }
+            return { status: false, msg: "Gagal login", data: null };
         } catch (error) {
+            console.error("Kesalahan saat mengirim OTP:", error.message);
             return { status: false, msg: error.message, data: null };
         }
     }
@@ -174,15 +178,18 @@ class Power extends Browser {
 
     async getCookies() {
         try {
-            let cook = "";
             const cookies = await this.page.cookies();
+            if (cookies.length === 0) {
+                throw new Error("Tidak ada cookie yang ditemukan.");
+            }
+            let cook = "";
             for (const cookie of cookies) {
                 cook += `${cookie.name}=${cookie.value};`;
             }
             this.cook = cook;
             return cook;
         } catch (error) {
-            console.error(error);
+            console.error("Kesalahan saat mendapatkan cookies:", error.message);
             this.cook = null;
         }
     }
